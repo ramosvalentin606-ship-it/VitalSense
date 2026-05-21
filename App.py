@@ -18,7 +18,6 @@ st.set_page_config(
 # --- CONFIGURACIÓN DE LA API DE GEMINI ---
 api_configurada = False
 try:
-    # Intenta leer la clave desde los secretos de Streamlit
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     api_configurada = True
 except FileNotFoundError:
@@ -36,7 +35,6 @@ def transcribir_audio(audio_bytes):
     try:
         with sr.AudioFile(audio_file) as source:
             audio_data = r.record(source)
-            # Usamos español de Colombia, puedes cambiarlo si deseas
             texto = r.recognize_google(audio_data, language="es-CO") 
             return texto
     except sr.UnknownValueError:
@@ -62,7 +60,8 @@ def obtener_orientacion_medica(sintomas_texto):
     IMPORTANTE: Nunca des un diagnóstico definitivo ni recetes medicamentos. Usa un tono empático, profesional y tranquilizador.
     """
     
-   modelo = genai.GenerativeModel('models/gemini-1.5-flash-latest', system_instruction=prompt_sistema)
+    # Modelo actualizado y con indentación correcta
+    modelo = genai.GenerativeModel('models/gemini-1.5-flash-latest', system_instruction=prompt_sistema)
     respuesta = modelo.generate_content(sintomas_texto)
     return respuesta.text
 
@@ -75,10 +74,9 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- MENÚ LATERAL (Inicio y Registro) ---
+# --- MENÚ LATERAL ---
 st.sidebar.image("https://cdn-icons-png.flaticon.com/512/2854/2854904.png", width=100)
 st.sidebar.title("VitalSense Panel")
-
 st.sidebar.subheader("📋 Registro de Paciente")
 nombre = st.sidebar.text_input("Nombre Completo")
 edad = st.sidebar.number_input("Edad", min_value=0, max_value=120, value=25)
@@ -87,7 +85,6 @@ edad = st.sidebar.number_input("Edad", min_value=0, max_value=120, value=25)
 st.markdown('<p class="main-title">🩺 VitalSense: Orientación Médica Multimodal</p>', unsafe_allow_html=True)
 st.write("Identifica posibles afecciones de manera rápida y monitorea signos vitales en tiempo real.")
 
-# Pestañas para organizar la experiencia
 tab_sintomas, tab_sensores, tab_reporte = st.tabs([
     "🗣️ Consulta de Síntomas", 
     "📊 Monitoreo de Sensores", 
@@ -124,7 +121,6 @@ with tab_sintomas:
 
     st.write("---")
     
-    # Botón principal de análisis
     if st.button("Analizar Síntomas", type="primary"):
         if not api_configurada:
             st.error("No se puede analizar porque la API Key de Gemini no está configurada.")
@@ -132,7 +128,6 @@ with tab_sintomas:
             with st.spinner("La Inteligencia Artificial está analizando tus síntomas..."):
                 sintomas_finales = ""
                 
-                # 1. Priorizar el audio si existe
                 if audio is not None:
                     st.info("Procesando tu nota de voz...")
                     texto_transcrito = transcribir_audio(audio['bytes'])
@@ -141,20 +136,14 @@ with tab_sintomas:
                         st.success(f"🎙️ Escuchamos: '{sintomas_finales}'")
                     else:
                         st.error("Hubo un problema transcribiendo el audio. Intenta usar el texto.")
-                
-                # 2. Si no hay audio, usar texto
                 elif sintomas_texto.strip() != "":
                     sintomas_finales = sintomas_texto
                     
-                # 3. Procesar con Gemini
                 if sintomas_finales:
                     analisis_ia = obtener_orientacion_medica(sintomas_finales)
-                    
-                    # Guardar en sesión
                     st.session_state['resultado_ia'] = analisis_ia
                     st.session_state['analizado'] = True
                     st.session_state['sintomas_detectados'] = sintomas_finales
-                    
                     st.success("Análisis completado exitosamente. Ve a la pestaña 'Estado Final y Reporte'.")
                 else:
                     st.warning("Por favor, describe tus síntomas escribiendo o grabando un audio antes de analizar.")
@@ -206,12 +195,9 @@ with tab_reporte:
         if edad > 0:
             st.info(f"Edad: {edad} años | Síntomas reportados: {st.session_state.get('sintomas_detectados', '')}")
         
-        # Imprimir respuesta de la IA
         st.markdown(st.session_state['resultado_ia'])
-        
         st.write("---")
         
-        # Generar texto para el reporte descargable
         reporte_texto = f"REPORTE VITALSENSE\n"
         reporte_texto += f"------------------\n"
         reporte_texto += f"Paciente: {nombre if nombre else 'Anónimo'}\n"
