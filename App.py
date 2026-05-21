@@ -43,7 +43,7 @@ def transcribir_audio(audio_bytes):
         return None
 
 def obtener_orientacion_medica(sintomas_texto):
-    """Envía los síntomas a la IA usando una petición REST directa (A prueba de fallos)."""
+    """Envía los síntomas a la IA descubriendo el modelo válido dinámicamente."""
     prompt_completo = f"""
     Eres el motor de IA de VitalSense, un asistente de orientación médica pre-diagnóstica.
     Analiza los síntomas descritos por el usuario y responde estrictamente con este formato en Markdown:
@@ -63,21 +63,41 @@ def obtener_orientacion_medica(sintomas_texto):
     "{sintomas_texto}"
     """
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={API_KEY}"
+    # 1. AUTODESCUBRIMIENTO: Preguntarle a Google qué modelos están disponibles para tu Clave
+    url_listar = f"https://generativelanguage.googleapis.com/v1beta/models?key={API_KEY}"
+    nombre_modelo = None
+    
+    try:
+        res_modelos = requests.get(url_listar).json()
+        if 'models' in res_modelos:
+            for m in res_modelos['models']:
+                # Buscamos un modelo que permita generar texto y sea de la familia Gemini
+                if 'generateContent' in m.get('supportedGenerationMethods', []) and 'gemini' in m.get('name', '').lower():
+                    nombre_modelo = m['name'] # Ejemplo: retorna 'models/gemini-1.5-flash'
+                    break
+    except Exception as e:
+        pass # Si falla, continuará e intentará usar el modelo por defecto
+        
+    # Si la búsqueda falló, usamos este por defecto como último recurso
+    if not nombre_modelo:
+        nombre_modelo = "models/gemini-1.5-flash"
+        
+    # 2. PETICIÓN REAL DE ANÁLISIS
+    url_generar = f"https://generativelanguage.googleapis.com/v1beta/{nombre_modelo}:generateContent?key={API_KEY}"
     headers = {'Content-Type': 'application/json'}
     data = {
         "contents": [{"parts": [{"text": prompt_completo}]}]
     }
     
     try:
-        respuesta = requests.post(url, headers=headers, json=data)
+        respuesta = requests.post(url_generar, headers=headers, json=data)
         respuesta_json = respuesta.json()
         
-        # Si hay un error con la clave o el servidor, lo muestra claramente
+        # Si la API de Google devuelve un error, lo mostramos indicando el modelo exacto que falló
         if 'error' in respuesta_json:
             error_msg = respuesta_json['error']['message']
-            st.error(f"Error de Google API: {error_msg}")
-            return f"Ocurrió un error con el servicio de IA: {error_msg}"
+            st.error(f"Error de Google API usando el modelo '{nombre_modelo}': {error_msg}")
+            return f"Ocurrió un error con el servicio de IA. Revisa los mensajes de error arriba."
             
         return respuesta_json['candidates'][0]['content']['parts'][0]['text']
         
@@ -145,7 +165,7 @@ with tab_sintomas:
         if not api_configurada:
             st.error("No se puede analizar porque la API Key de Gemini no está configurada o es incorrecta.")
         else:
-            with st.spinner("La Inteligencia Artificial está analizando tus síntomas..."):
+            with st.spinner("La Inteligencia Artificial está analizando tus síntomas y verificando conexión..."):
                 sintomas_finales = ""
                 
                 if audio is not None:
