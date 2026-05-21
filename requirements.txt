@@ -1,4 +1,5 @@
 streamlit
 streamlit-mic-recorder
-google-generativeai
+google-generativeai>=0.7.0
 SpeechRecognition
+pillow
