@@ -2,6 +2,7 @@ import streamlit as st
 import io
 import time
 import random
+import base64
 from PIL import Image
 import requests
 import speech_recognition as sr
@@ -9,7 +10,7 @@ from streamlit_mic_recorder import mic_recorder
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
-    page_title="VitalSense",
+    page_title="VitalSense | Tu Salud",
     page_icon="🩺",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -20,16 +21,11 @@ api_configurada = False
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
     api_configurada = True
-except FileNotFoundError:
-    st.sidebar.error("⚠️ Falta el archivo secrets.toml.")
-except KeyError:
-    st.sidebar.error("⚠️ Falta configurar GEMINI_API_KEY en secrets.toml.")
 except Exception as e:
-    st.sidebar.error(f"⚠️ Error al configurar la clave: {e}")
+    st.sidebar.error("⚠️ Falta configurar GEMINI_API_KEY en secrets.toml.")
 
 # --- FUNCIONES DE INTELIGENCIA ARTIFICIAL ---
 def transcribir_audio(audio_bytes):
-    """Convierte el audio del usuario a texto."""
     r = sr.Recognizer()
     audio_file = io.BytesIO(audio_bytes)
     try:
@@ -38,166 +34,190 @@ def transcribir_audio(audio_bytes):
             texto = r.recognize_google(audio_data, language="es-CO") 
             return texto
     except sr.UnknownValueError:
-        return "Lo siento, no pude entender el audio."
+        return "No pude entender el audio con claridad."
     except Exception as e:
         return None
 
-def obtener_orientacion_medica(sintomas_texto):
-    """Envía los síntomas a la IA descubriendo el modelo válido dinámicamente."""
+def obtener_orientacion_medica(sintomas_texto, imagen_b64=None):
+    """Envía los síntomas (y la imagen si existe) a la IA dinámicamente."""
     prompt_completo = f"""
-    Eres el motor de IA de VitalSense, un asistente de orientación médica pre-diagnóstica.
-    Analiza los síntomas descritos por el usuario y responde estrictamente con este formato en Markdown:
+    Eres el Doctor Andrés, el motor de IA de VitalSense. Eres un asistente médico virtual pre-diagnóstico.
+    Analiza los síntomas descritos por el usuario (y la imagen proporcionada, si la hay) y responde con este formato en Markdown:
     
     ### 🔍 Posibles Afecciones
     (Menciona 2 o 3 afecciones posibles, aclarando que es una evaluación preliminar).
     
     ### 💡 Recomendaciones de Cuidado en Casa
-    (Da 3 a 4 consejos prácticos y seguros para aliviar los síntomas).
+    (Da 3 a 4 consejos prácticos).
     
     ### 🚨 Nivel de Alerta y Recomendación de Visita
-    (Indica si el nivel es Bajo, Medio o Alto. Di claramente si debe acudir a un médico o urgencias).
+    (Nivel Bajo, Medio o Alto. Di claramente si debe acudir a un centro médico).
     
-    IMPORTANTE: Nunca des un diagnóstico definitivo ni recetes medicamentos. Usa un tono empático, profesional y tranquilizador.
+    IMPORTANTE: Si hay una imagen, descríbela brevemente en tu análisis. Nunca des un diagnóstico definitivo. Usa un tono empático y profesional.
     
     SÍNTOMAS DEL PACIENTE:
     "{sintomas_texto}"
     """
     
-    # 1. AUTODESCUBRIMIENTO: Preguntarle a Google qué modelos están disponibles para tu Clave
+    # Autodescubrimiento del modelo
     url_listar = f"https://generativelanguage.googleapis.com/v1beta/models?key={API_KEY}"
-    nombre_modelo = None
+    nombre_modelo = "models/gemini-1.5-flash" # Por defecto (ideal para visión y texto)
     
     try:
         res_modelos = requests.get(url_listar).json()
         if 'models' in res_modelos:
             for m in res_modelos['models']:
-                # Buscamos un modelo que permita generar texto y sea de la familia Gemini
                 if 'generateContent' in m.get('supportedGenerationMethods', []) and 'gemini' in m.get('name', '').lower():
-                    nombre_modelo = m['name'] # Ejemplo: retorna 'models/gemini-1.5-flash'
+                    nombre_modelo = m['name']
                     break
-    except Exception as e:
-        pass # Si falla, continuará e intentará usar el modelo por defecto
+    except:
+        pass 
         
-    # Si la búsqueda falló, usamos este por defecto como último recurso
-    if not nombre_modelo:
-        nombre_modelo = "models/gemini-1.5-flash"
-        
-    # 2. PETICIÓN REAL DE ANÁLISIS
     url_generar = f"https://generativelanguage.googleapis.com/v1beta/{nombre_modelo}:generateContent?key={API_KEY}"
     headers = {'Content-Type': 'application/json'}
-    data = {
-        "contents": [{"parts": [{"text": prompt_completo}]}]
-    }
+    
+    # Estructuramos el mensaje para que acepte Texto + Imagen
+    parts = [{"text": prompt_completo}]
+    if imagen_b64:
+        parts.append({
+            "inlineData": {
+                "mimeType": "image/jpeg",
+                "data": imagen_b64
+            }
+        })
+        
+    data = {"contents": [{"parts": parts}]}
     
     try:
         respuesta = requests.post(url_generar, headers=headers, json=data)
         respuesta_json = respuesta.json()
-        
-        # Si la API de Google devuelve un error, lo mostramos indicando el modelo exacto que falló
         if 'error' in respuesta_json:
-            error_msg = respuesta_json['error']['message']
-            st.error(f"Error de Google API usando el modelo '{nombre_modelo}': {error_msg}")
-            return f"Ocurrió un error con el servicio de IA. Revisa los mensajes de error arriba."
-            
+            return f"Error del servicio de IA: {respuesta_json['error']['message']}"
         return respuesta_json['candidates'][0]['content']['parts'][0]['text']
-        
     except Exception as e:
-        st.error(f"Error de conexión: {e}")
         return "No se pudo conectar con el servidor de Inteligencia Artificial."
 
-# --- ESTILOS PERSONALIZADOS (CSS) ---
+# --- ESTILOS PERSONALIZADOS (CSS MEJORADO) ---
 st.markdown("""
     <style>
-    .main-title { font-size: 38px; font-weight: bold; color: #007bff; text-align: center; margin-bottom: 20px; }
-    .sensor-card { background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #28a745; margin-bottom: 10px; }
-    .alert-card { background-color: #fff3cd; padding: 15px; border-radius: 10px; border-left: 5px solid #ffc107; margin-bottom: 10px; }
+    .main-title { font-size: 42px; font-weight: 800; color: #1E3A8A; text-align: center; margin-bottom: 5px; }
+    .sub-title { font-size: 18px; color: #64748B; text-align: center; margin-bottom: 30px; }
+    .dr-andres-card { background-color: #F0F9FF; padding: 20px; border-radius: 15px; border-left: 6px solid #0EA5E9; margin-bottom: 25px; display: flex; align-items: center; gap: 20px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+    .dr-andres-icon { font-size: 50px; }
+    .sensor-card { background-color: #F0FDF4; padding: 20px; border-radius: 12px; border: 1px solid #BBF7D0; text-align: center; }
+    .alert-card { background-color: #FEF2F2; padding: 20px; border-radius: 12px; border: 1px solid #FECACA; text-align: center; color: #991B1B; font-weight: bold;}
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+    .stTabs [data-baseweb="tab"] { border-radius: 8px 8px 0px 0px; padding: 10px 20px; background-color: #F8FAFC; }
+    .stTabs [aria-selected="true"] { background-color: #DBEAFE; font-weight: bold; color: #1D4ED8; }
     </style>
 """, unsafe_allow_html=True)
 
 # --- MENÚ LATERAL ---
-st.sidebar.image("https://cdn-icons-png.flaticon.com/512/2854/2854904.png", width=100)
-st.sidebar.title("VitalSense Panel")
-st.sidebar.subheader("📋 Registro de Paciente")
-nombre = st.sidebar.text_input("Nombre Completo")
-edad = st.sidebar.number_input("Edad", min_value=0, max_value=120, value=25)
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/2854/2854904.png", width=80)
+    st.title("VitalSense")
+    st.markdown("---")
+    st.subheader("📋 Datos del Paciente")
+    nombre = st.text_input("Nombre Completo", placeholder="Ej. Juan Pérez")
+    edad = st.number_input("Edad", min_value=0, max_value=120, value=25)
+    st.markdown("---")
+    st.info("Sistema de monitoreo y pre-diagnóstico multimodal.")
 
 # --- CUERPO PRINCIPAL ---
-st.markdown('<p class="main-title">🩺 VitalSense: Orientación Médica Multimodal</p>', unsafe_allow_html=True)
-st.write("Identifica posibles afecciones de manera rápida y monitorea signos vitales en tiempo real.")
+st.markdown('<p class="main-title">🩺 VitalSense</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">Plataforma Inteligente de Orientación Médica</p>', unsafe_allow_html=True)
+
+# Tarjeta de Bienvenida del Doctor Andrés
+st.markdown("""
+<div class="dr-andres-card">
+    <div class="dr-andres-icon">👨‍⚕️</div>
+    <div>
+        <h4 style="margin:0; color:#0369A1;">¡Hola! Soy el Doctor Andrés</h4>
+        <p style="margin:5px 0 0 0; color:#334155;">
+        Soy tu asistente virtual en VitalSense. Puedes escribirme, enviarme un audio o usar la cámara para mostrarme cualquier afección visible (como manchas o irritaciones). Estoy aquí para orientarte.
+        </p>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 tab_sintomas, tab_sensores, tab_reporte = st.tabs([
-    "🗣️ Consulta de Síntomas", 
-    "📊 Monitoreo de Sensores", 
-    "📋 Estado Final y Reporte"
+    "🗣️ Consulta Multimodal", 
+    "📊 Monitoreo Wokwi/ESP32", 
+    "📋 Tu Reporte Médico"
 ])
 
 # ==========================================
-# TAB 1: INTERACCIÓN MULTIMODAL
+# TAB 1: INTERACCIÓN MULTIMODAL CON CÁMARA
 # ==========================================
 with tab_sintomas:
-    st.header("Déjanos saber qué sientes")
-    st.write("Puedes usar texto, tu voz o la cámara para describir tus síntomas.")
+    st.write("### ¿Cómo te podemos ayudar hoy?")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
+    imagen_b64 = None
+    audio = None
     
     with col1:
-        st.subheader("✍️ Entrada por Texto")
-        sintomas_texto = st.text_area("Describe detalladamente tus molestias aquí:")
-        
-    with col2:
-        st.subheader("🎙️ Entrada por Voz")
-        st.write("Presiona para grabar tus síntomas:")
-        audio = mic_recorder(start_prompt="🔴 Grabar Voz", stop_prompt="⏹️ Detener", key='recorder')
-        if audio:
-            st.audio(audio['bytes'])
-            st.success("¡Audio recibido con éxito!")
+        with st.expander("✍️ Describir por Texto", expanded=True):
+            sintomas_texto = st.text_area("Detalla tus molestias aquí:", height=130, placeholder="Ej. Tengo dolor de cabeza desde ayer...")
             
-    with col3:
-        st.subheader("📷 Escaneo Inteligente")
-        img_file = st.camera_input("Toma una foto (Opcional, en desarrollo)")
-        if img_file:
-            st.image(Image.open(img_file), caption="Imagen capturada", use_container_width=True)
-            st.info("La integración de IA con imágenes estará disponible pronto.")
-
-    st.write("---")
-    
-    if st.button("Analizar Síntomas", type="primary"):
-        if not api_configurada:
-            st.error("No se puede analizar porque la API Key de Gemini no está configurada o es incorrecta.")
-        else:
-            with st.spinner("La Inteligencia Artificial está analizando tus síntomas y verificando conexión..."):
-                sintomas_finales = ""
+        with st.expander("🎙️ Grabar Nota de Voz"):
+            st.info("Presiona el botón para hablar. Asegúrate de estar en un lugar sin mucho ruido.")
+            audio = mic_recorder(start_prompt="🔴 Iniciar Grabación", stop_prompt="⏹️ Detener Grabación", key='recorder')
+            if audio:
+                st.audio(audio['bytes'])
                 
+    with col2:
+        with st.expander("📷 Escáner Visual (Análisis por Imagen)", expanded=True):
+            st.write("Si tienes un síntoma visible en la piel, tómale una foto.")
+            img_file = st.camera_input("Capturar síntoma")
+            if img_file:
+                bytes_data = img_file.getvalue()
+                # Convertimos la imagen a base64 para enviarla a Gemini
+                imagen_b64 = base64.b64encode(bytes_data).decode('utf-8')
+                st.success("✅ Imagen lista para ser procesada por la IA.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # Botón de análisis mejorado
+    if st.button("🧠 Analizar Síntomas con el Doctor Andrés", type="primary", use_container_width=True):
+        if not api_configurada:
+            st.error("La API Key de Gemini no está configurada.")
+        elif not (sintomas_texto or audio or imagen_b64):
+            st.warning("Por favor, ingresa texto, un audio o una fotografía para poder analizar tu caso.")
+        else:
+            with st.spinner("El Doctor Andrés está procesando tu información..."):
+                sintomas_finales = sintomas_texto if sintomas_texto else ""
+                
+                # Procesar audio si existe
                 if audio is not None:
-                    st.info("Procesando tu nota de voz...")
                     texto_transcrito = transcribir_audio(audio['bytes'])
-                    if texto_transcrito and texto_transcrito != "Lo siento, no pude entender el audio.":
-                        sintomas_finales = texto_transcrito
-                        st.success(f"🎙️ Escuchamos: '{sintomas_finales}'")
-                    else:
-                        st.error("Hubo un problema transcribiendo el audio. Intenta usar el texto.")
-                elif sintomas_texto.strip() != "":
-                    sintomas_finales = sintomas_texto
+                    if texto_transcrito and "No pude entender" not in texto_transcrito:
+                        sintomas_finales += f" [Audio transcrito: {texto_transcrito}]"
+                        st.toast("🎙️ Audio procesado correctamente")
+                
+                # Si solo mandó foto sin texto, agregamos un contexto por defecto
+                if imagen_b64 and not sintomas_finales.strip():
+                    sintomas_finales = "El paciente adjuntó una imagen de su síntoma físico para evaluación visual."
                     
-                if sintomas_finales:
-                    analisis_ia = obtener_orientacion_medica(sintomas_finales)
-                    st.session_state['resultado_ia'] = analisis_ia
-                    st.session_state['analizado'] = True
-                    st.session_state['sintomas_detectados'] = sintomas_finales
-                    st.success("Análisis completado exitosamente. Ve a la pestaña 'Estado Final y Reporte'.")
-                else:
-                    st.warning("Por favor, describe tus síntomas escribiendo o grabando un audio antes de analizar.")
+                # Llamada a la IA con Texto e Imagen
+                analisis_ia = obtener_orientacion_medica(sintomas_finales, imagen_b64)
+                
+                # Guardado en sesión
+                st.session_state['resultado_ia'] = analisis_ia
+                st.session_state['analizado'] = True
+                st.session_state['sintomas_detectados'] = sintomas_finales
+                
+                st.success("✨ Análisis completado. Revisa la pestaña 'Tu Reporte Médico'.")
 
 # ==========================================
 # TAB 2: MONITOREO DE SENSORES
 # ==========================================
 with tab_sensores:
-    st.header("📊 Simulación de Sensores Biomédicos")
-    st.write("Simulación de conexión con ESP32 / WOKWI.")
+    st.write("### Simulación en Tiempo Real (Hardware)")
+    st.info("Aquí se integrarán los datos provenientes del ESP32 simulado en Wokwi.")
     
     placeholder = st.empty()
-    
-    if st.checkbox("Activar monitoreo en vivo"):
+    if st.toggle("Activar transmisión de sensores"):
         for i in range(5):
             ritmo_cardiaco = random.randint(65, 115)
             temperatura = round(random.uniform(36.2, 38.9), 1)
@@ -205,53 +225,37 @@ with tab_sensores:
             with placeholder.container():
                 c1, c2 = st.columns(2)
                 with c1:
-                    st.metric(label="❤️ Ritmo Cardíaco", value=f"{ritmo_cardiaco} BPM")
+                    st.metric(label="❤️ Ritmo Cardíaco", value=f"{ritmo_cardiaco} BPM", delta=random.randint(-2, 2))
                 with c2:
-                    st.metric(label="🌡️ Temperatura Corporal", value=f"{temperatura} °C")
+                    st.metric(label="🌡️ Temperatura", value=f"{temperatura} °C", delta=round(random.uniform(-0.5, 0.5), 1))
                 
                 if temperatura >= 38.0 or ritmo_cardiaco > 100:
-                    st.markdown(f"""
-                    <div class="alert-card">
-                        ⚠️ <b>ALERTA AUTOMÁTICA:</b> Se detectaron anomalías (Fiebre o Taquicardia). 
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.markdown('<div class="alert-card">⚠️ <b>ALERTA:</b> Signos vitales alterados (Fiebre/Taquicardia).</div>', unsafe_allow_html=True)
                 else:
-                    st.markdown("""
-                    <div class="sensor-card">
-                        ✅ Signos vitales estables dentro del rango normal.
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
+                    st.markdown('<div class="sensor-card">✅ Signos vitales estables.</div>', unsafe_allow_html=True)
             time.sleep(1)
 
 # ==========================================
-# TAB 3: ESTADO FINAL Y REPORTE
+# TAB 3: REPORTE FINAL
 # ==========================================
 with tab_reporte:
-    st.header("📋 Conclusión y Recomendaciones")
-    
     if st.session_state.get('analizado', False):
-        st.subheader(f"Reporte de Orientación para: {nombre if nombre else 'Paciente Anónimo'}")
-        if edad > 0:
-            st.info(f"Edad: {edad} años | Síntomas reportados: {st.session_state.get('sintomas_detectados', '')}")
+        st.write(f"### 📋 Reporte Clínico Preliminar")
+        st.caption(f"**Paciente:** {nombre if nombre else 'No registrado'} | **Edad:** {edad} años")
+        st.markdown("---")
         
+        # Imprime la respuesta detallada de la IA
         st.markdown(st.session_state['resultado_ia'])
-        st.write("---")
         
-        reporte_texto = f"REPORTE VITALSENSE\n"
-        reporte_texto += f"------------------\n"
-        reporte_texto += f"Paciente: {nombre if nombre else 'Anónimo'}\n"
-        reporte_texto += f"Edad: {edad}\n"
-        reporte_texto += f"Síntomas declarados: {st.session_state.get('sintomas_detectados', '')}\n\n"
-        reporte_texto += f"ANALISIS IA:\n"
-        reporte_texto += f"{st.session_state['resultado_ia']}\n"
+        st.markdown("---")
+        reporte_texto = f"REPORTE VITALSENSE (DR. ANDRÉS)\nPaciente: {nombre}\nEdad: {edad}\n\n{st.session_state['resultado_ia']}"
         
         st.download_button(
-            label="📥 Descargar Reporte Médico (TXT)",
+            label="📥 Descargar Reporte PDF/TXT",
             data=reporte_texto,
-            file_name="reporte_vitalsense.txt",
+            file_name="VitalSense_Reporte.txt",
             mime="text/plain",
             type="primary"
         )
     else:
-        st.warning("Por favor, ve a la pestaña 'Consulta de Síntomas' y analiza tus datos primero.")
+        st.info("👈 Ve a la pestaña 'Consulta Multimodal' e ingresa tus datos para generar este reporte.")
