@@ -44,7 +44,9 @@ def transcribir_audio(audio_bytes):
 
 def obtener_orientacion_medica(sintomas_texto):
     """Envía los síntomas a la IA para obtener una orientación estructurada."""
-    prompt_sistema = """
+    
+    # Unificamos las instrucciones del sistema y los síntomas en un solo texto
+    prompt_completo = f"""
     Eres el motor de IA de VitalSense, un asistente de orientación médica pre-diagnóstica.
     Analiza los síntomas descritos por el usuario y responde estrictamente con este formato en Markdown:
     
@@ -58,7 +60,15 @@ def obtener_orientacion_medica(sintomas_texto):
     (Indica si el nivel es Bajo, Medio o Alto. Di claramente si debe acudir a un médico o urgencias).
     
     IMPORTANTE: Nunca des un diagnóstico definitivo ni recetes medicamentos. Usa un tono empático, profesional y tranquilizador.
+    
+    SÍNTOMAS DEL PACIENTE:
+    "{sintomas_texto}"
     """
+    
+    # Usamos el nombre base más compatible y eliminamos parámetros extra
+    modelo = genai.GenerativeModel('gemini-1.5-flash')
+    respuesta = modelo.generate_content(prompt_completo)
+    return respuesta.text
     
     # Modelo actualizado y con indentación correcta
     modelo = genai.GenerativeModel('models/gemini-1.5-flash-latest', system_instruction=prompt_sistema)
