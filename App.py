@@ -71,7 +71,8 @@ def obtener_orientacion_medica(sintomas_texto):
     return respuesta.text
     
     # Modelo actualizado y con indentación correcta
-    modelo = genai.GenerativeModel('models/gemini-1.5-flash-latest', system_instruction=prompt_sistema)
+    # Usamos el modelo global estándar para máxima compatibilidad
+    modelo = genai.GenerativeModel('gemini-pro')
     respuesta = modelo.generate_content(sintomas_texto)
     return respuesta.text
 
