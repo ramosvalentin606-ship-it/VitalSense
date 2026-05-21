@@ -62,7 +62,7 @@ def obtener_orientacion_medica(sintomas_texto):
     IMPORTANTE: Nunca des un diagnóstico definitivo ni recetes medicamentos. Usa un tono empático, profesional y tranquilizador.
     """
     
-    modelo = genai.GenerativeModel('gemini-1.5-flash', system_instruction=prompt_sistema)
+   modelo = genai.GenerativeModel('models/gemini-1.5-flash-latest', system_instruction=prompt_sistema)
     respuesta = modelo.generate_content(sintomas_texto)
     return respuesta.text
 
