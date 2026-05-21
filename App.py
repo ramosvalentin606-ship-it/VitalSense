@@ -3,7 +3,7 @@ import io
 import time
 import random
 from PIL import Image
-import google.generativeai as genai
+import requests
 import speech_recognition as sr
 from streamlit_mic_recorder import mic_recorder
 
@@ -18,14 +18,14 @@ st.set_page_config(
 # --- CONFIGURACIÓN DE LA API DE GEMINI ---
 api_configurada = False
 try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    API_KEY = st.secrets["GEMINI_API_KEY"]
     api_configurada = True
 except FileNotFoundError:
     st.sidebar.error("⚠️ Falta el archivo secrets.toml.")
 except KeyError:
     st.sidebar.error("⚠️ Falta configurar GEMINI_API_KEY en secrets.toml.")
 except Exception as e:
-    st.sidebar.error(f"⚠️ Error al configurar la API: {e}")
+    st.sidebar.error(f"⚠️ Error al configurar la clave: {e}")
 
 # --- FUNCIONES DE INTELIGENCIA ARTIFICIAL ---
 def transcribir_audio(audio_bytes):
@@ -43,9 +43,7 @@ def transcribir_audio(audio_bytes):
         return None
 
 def obtener_orientacion_medica(sintomas_texto):
-    """Envía los síntomas a la IA para obtener una orientación estructurada."""
-    
-    # Unificamos las instrucciones del sistema y los síntomas en un solo texto
+    """Envía los síntomas a la IA usando una petición REST directa (A prueba de fallos)."""
     prompt_completo = f"""
     Eres el motor de IA de VitalSense, un asistente de orientación médica pre-diagnóstica.
     Analiza los síntomas descritos por el usuario y responde estrictamente con este formato en Markdown:
@@ -65,16 +63,27 @@ def obtener_orientacion_medica(sintomas_texto):
     "{sintomas_texto}"
     """
     
-    # Usamos el nombre base más compatible y eliminamos parámetros extra
-    modelo = genai.GenerativeModel('gemini-1.5-flash')
-    respuesta = modelo.generate_content(prompt_completo)
-    return respuesta.text
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
+    headers = {'Content-Type': 'application/json'}
+    data = {
+        "contents": [{"parts": [{"text": prompt_completo}]}]
+    }
     
-    # Modelo actualizado y con indentación correcta
-    # Usamos el modelo global estándar para máxima compatibilidad
-    modelo = genai.GenerativeModel('gemini-pro')
-    respuesta = modelo.generate_content(sintomas_texto)
-    return respuesta.text
+    try:
+        respuesta = requests.post(url, headers=headers, json=data)
+        respuesta_json = respuesta.json()
+        
+        # Si hay un error con la clave o el servidor, lo muestra claramente
+        if 'error' in respuesta_json:
+            error_msg = respuesta_json['error']['message']
+            st.error(f"Error de Google API: {error_msg}")
+            return f"Ocurrió un error con el servicio de IA: {error_msg}"
+            
+        return respuesta_json['candidates'][0]['content']['parts'][0]['text']
+        
+    except Exception as e:
+        st.error(f"Error de conexión: {e}")
+        return "No se pudo conectar con el servidor de Inteligencia Artificial."
 
 # --- ESTILOS PERSONALIZADOS (CSS) ---
 st.markdown("""
@@ -134,7 +143,7 @@ with tab_sintomas:
     
     if st.button("Analizar Síntomas", type="primary"):
         if not api_configurada:
-            st.error("No se puede analizar porque la API Key de Gemini no está configurada.")
+            st.error("No se puede analizar porque la API Key de Gemini no está configurada o es incorrecta.")
         else:
             with st.spinner("La Inteligencia Artificial está analizando tus síntomas..."):
                 sintomas_finales = ""
